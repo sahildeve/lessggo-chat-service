@@ -2,6 +2,7 @@ import { Server } from "socket.io";
 import jwt from "jsonwebtoken";
 import redis from "./config/redis.js";
 import * as chatService from "./services/chat.service.js";
+import { isRideMember } from "./utils/rideMembership.js";
 import logger from "./utils/logger.js";
 
 const initSocket = (httpServer) => {
@@ -12,7 +13,6 @@ const initSocket = (httpServer) => {
     },
   });
 
-  // ─── Auth Middleware
   io.use(async (socket, next) => {
     try {
       const token =
@@ -31,18 +31,12 @@ const initSocket = (httpServer) => {
     }
   });
 
-  // ─── Connection
   io.on("connection", (socket) => {
     logger.info(`User connected to chat: ${socket.user.username}`);
 
-    // ─── Join Chat Room
     socket.on("join_chat", async (rideId) => {
       try {
-        // Redis me check karo — ye user is ride me hai?
-        const isMember = await redis.sismember(
-          `ride_members:${rideId}`,
-          socket.user.sub,
-        );
+        const isMember = await isRideMember(rideId, socket.user.sub);
 
         if (!isMember) {
           socket.emit("error", {
@@ -53,26 +47,14 @@ const initSocket = (httpServer) => {
 
         socket.join(rideId);
         logger.info(`${socket.user.username} joined chat room: ${rideId}`);
-
-        // System message — user joined
-        const sysMsg = await chatService.saveSystemMessage(
-          rideId,
-          `${socket.user.username} joined the chat`,
-        );
-
-        // Room me sabko batao
-        io.to(rideId).emit("system_message", {
-          message: sysMsg.message,
-          timestamp: sysMsg.createdAt,
-        });
       } catch (err) {
         logger.error("Join chat error:", err.message);
         socket.emit("error", { message: err.message });
       }
     });
 
-    // ─── Send Message
-    socket.on("send_message", async ({ rideId, message }) => {
+    socket.on("send_message", async ({ rideId, message, tempId }) => {
+      console.log(`Received message from ${socket.user.username} in ride ${rideId}: ${message}`);
       try {
         if (!message?.trim()) return;
         if (message.length > 500) {
@@ -80,11 +62,7 @@ const initSocket = (httpServer) => {
           return;
         }
 
-        // Redis me check karo
-        const isMember = await redis.sismember(
-          `ride_members:${rideId}`,
-          socket.user.sub,
-        );
+        const isMember = await isRideMember(rideId, socket.user.sub);
         if (!isMember) {
           socket.emit("error", {
             message: "You are not a member of this ride",
@@ -92,7 +70,6 @@ const initSocket = (httpServer) => {
           return;
         }
 
-        // DB me save karo
         const savedMsg = await chatService.saveMessage(
           rideId,
           socket.user.sub,
@@ -100,12 +77,15 @@ const initSocket = (httpServer) => {
           message.trim(),
         );
 
-        // Room me sabko bhejo
         io.to(rideId).emit("new_message", {
           messageId: savedMsg._id,
+          tempId,
+          conversationId: rideId,
+          rideId,
           senderId: socket.user.sub,
           senderUsername: socket.user.username,
           message: savedMsg.message,
+          messageType: savedMsg.messageType,
           timestamp: savedMsg.createdAt,
         });
       } catch (err) {
@@ -114,36 +94,35 @@ const initSocket = (httpServer) => {
       }
     });
 
-    // ─── Leave Chat Room
-    socket.on("leave_chat", async (rideId) => {
-      try {
-        socket.leave(rideId);
-        logger.info(`${socket.user.username} left chat room: ${rideId}`);
-
-        const sysMsg = await chatService.saveSystemMessage(
-          rideId,
-          `${socket.user.username} left the chat`,
-        );
-
-        socket.to(rideId).emit("system_message", {
-          message: sysMsg.message,
-          timestamp: sysMsg.createdAt,
-        });
-      } catch (err) {
-        logger.error("Leave chat error:", err.message);
-      }
+    socket.on("leave_chat", (rideId) => {
+      socket.leave(rideId);
+      logger.info(`${socket.user.username} left chat room: ${rideId}`);
     });
 
-    // ─── Typing Indicator
     socket.on("typing", ({ rideId, isTyping }) => {
-      socket.to(rideId).emit("user_typing", {
+      const event = isTyping ? "typing_start" : "typing_stop";
+      socket.to(rideId).emit(event, {
+        conversationId: rideId,
         userId: socket.user.sub,
         username: socket.user.username,
-        isTyping,
       });
     });
 
-    // ─── Disconnect
+    socket.on("mark_read", async ({ rideId }) => {
+      try {
+        const isMember = await isRideMember(rideId, socket.user.sub);
+        if (!isMember) return;
+
+        await chatService.markAsRead(rideId, socket.user.sub);
+        socket.to(rideId).emit("message_read", {
+          conversationId: rideId,
+          userId: socket.user.sub,
+        });
+      } catch (err) {
+        logger.error("Mark read error:", err.message);
+      }
+    });
+
     socket.on("disconnect", () => {
       logger.info(`User disconnected from chat: ${socket.user.username}`);
     });

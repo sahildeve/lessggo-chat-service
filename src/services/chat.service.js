@@ -1,5 +1,47 @@
 import Message from "../models/Message.js";
+import redis from "../config/redis.js";
 import logger from "../utils/logger.js";
+import { assertRideMember } from "../utils/rideMembership.js";
+
+const READ_KEY_TTL = 86400 * 7;
+
+const readKey = (rideId, userId) => `chat_read:${rideId}:${userId}`;
+
+const attachReadStatus = (messages, userId, lastReadAt) => {
+  const lastReadTime = lastReadAt ? new Date(lastReadAt).getTime() : 0;
+
+  return messages.map((msg) => ({
+    ...msg,
+    isRead:
+      msg.senderId?.toString() === userId ||
+      new Date(msg.createdAt).getTime() <= lastReadTime,
+  }));
+};
+
+export const getLastReadAt = async (rideId, userId) => {
+  return redis.get(readKey(rideId, userId));
+};
+
+export const markAsRead = async (rideId, userId) => {
+  await assertRideMember(rideId, userId);
+  await redis.set(readKey(rideId, userId), new Date().toISOString(), "EX", READ_KEY_TTL);
+  return true;
+};
+
+export const getUnreadCount = async (rideId, userId) => {
+  const lastReadAt = await getLastReadAt(rideId, userId);
+  const query = {
+    rideId,
+    isDeleted: false,
+    senderId: { $ne: userId },
+  };
+
+  if (lastReadAt) {
+    query.createdAt = { $gt: new Date(lastReadAt) };
+  }
+
+  return Message.countDocuments(query);
+};
 
 export const saveMessage = async (
   rideId,
@@ -17,8 +59,11 @@ export const saveMessage = async (
   return msg;
 };
 
-export const getChatHistory = async (rideId, page = 1, limit = 50) => {
+export const getChatHistory = async (rideId, userId, page = 1, limit = 50) => {
+  await assertRideMember(rideId, userId);
+
   const skip = (page - 1) * limit;
+  const lastReadAt = await getLastReadAt(rideId, userId);
 
   const messages = await Message.find({
     rideId,
@@ -30,9 +75,11 @@ export const getChatHistory = async (rideId, page = 1, limit = 50) => {
     .lean();
 
   const total = await Message.countDocuments({ rideId, isDeleted: false });
+  const unreadCount = await getUnreadCount(rideId, userId);
 
   return {
-    messages: messages.reverse(),
+    messages: attachReadStatus(messages.reverse(), userId, lastReadAt),
+    unreadCount,
     pagination: {
       page,
       limit,
@@ -51,6 +98,9 @@ export const deleteMessage = async (messageId, userId) => {
     err.status = 404;
     throw err;
   }
+
+  await assertRideMember(message.rideId.toString(), userId);
+
   if (message.senderId.toString() !== userId) {
     const err = new Error("You can only delete your own messages");
     err.status = 403;
@@ -59,7 +109,7 @@ export const deleteMessage = async (messageId, userId) => {
 
   message.isDeleted = true;
   await message.save();
-  return true;
+  return message;
 };
 
 export const saveSystemMessage = async (rideId, message) => {
@@ -73,7 +123,6 @@ export const saveSystemMessage = async (rideId, message) => {
   return msg;
 };
 
-// ─── Delete All Messages of a Ride (ride end hone pe) 
 export const deleteRideChat = async (rideId) => {
   await Message.deleteMany({ rideId });
   logger.info(`Chat deleted for ride: ${rideId}`);
