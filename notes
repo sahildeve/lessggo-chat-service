@@ -1,0 +1,32 @@
+Har service = ek hi responsibility honi chahiye
+
+Location Service → Ride lifecycle, GPS tracking
+Chat Service      → Messaging, real-time communication
+
+Inka kaam ALAG hai, sirf data share kar rahe hain
+(Redis ke through) — isका matlab ye nahi ki
+unhe ek service banana chahiye!
+
+
+
+
+1. Scaling issue:
+   Agar chat traffic badh jaaye (zyada messages)
+   toh poori location-service bhi scale karni padegi
+   (jabki location service ko zarurat nahi)
+
+2. Deployment risk:
+   Chat me bug fix karna ho → location service
+   bhi redeploy hogi → location APIs down ho
+   sakti hain temporarily (jo critical hai —
+   real-time GPS tracking)
+
+3. Code complexity:
+   Ek service me location models + chat models
+   + dono ka business logic — confusing ho jaata hai
+
+4. Independent failure:
+   Abhi agar chat service crash ho jaaye,
+   location service chalti rahegi (ride tracking
+   continue rahega) — agar merge kar diya,
+   ek crash dono ko le jayega!
