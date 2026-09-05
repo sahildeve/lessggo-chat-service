@@ -3,6 +3,7 @@ import jwt from "jsonwebtoken";
 import redis from "./config/redis.js";
 import * as chatService from "./services/chat.service.js";
 import logger from "./utils/logger.js";
+import { getDisplayName } from "./utils/displayName.js";
 
 const initSocket = (httpServer) => {
   const io = new Server(httpServer, {
@@ -33,7 +34,7 @@ const initSocket = (httpServer) => {
 
   // ─── Connection
   io.on("connection", (socket) => {
-    logger.info(`User connected to chat: ${socket.user.username}`);
+    logger.info(`User connected to chat: ${getDisplayName(socket.user)}`);
 
     // ─── Join Chat Room
     socket.on("join_chat", async (rideId) => {
@@ -52,12 +53,12 @@ const initSocket = (httpServer) => {
         }
 
         socket.join(rideId);
-        logger.info(`${socket.user.username} joined chat room: ${rideId}`);
+        logger.info(`${getDisplayName(socket.user)} joined chat room: ${rideId}`);
 
         // System message — user joined
         const sysMsg = await chatService.saveSystemMessage(
           rideId,
-          `${socket.user.username} joined the chat`,
+          `${getDisplayName(socket.user)} joined the chat`,
         );
 
         // Room me sabko batao
@@ -96,7 +97,7 @@ const initSocket = (httpServer) => {
         const savedMsg = await chatService.saveMessage(
           rideId,
           socket.user.sub,
-          socket.user.username,
+          getDisplayName(socket.user),
           message.trim(),
         );
 
@@ -104,7 +105,7 @@ const initSocket = (httpServer) => {
         io.to(rideId).emit("new_message", {
           messageId: savedMsg._id,
           senderId: socket.user.sub,
-          senderUsername: socket.user.username,
+          senderUsername: getDisplayName(socket.user),
           message: savedMsg.message,
           timestamp: savedMsg.createdAt,
         });
@@ -118,11 +119,11 @@ const initSocket = (httpServer) => {
     socket.on("leave_chat", async (rideId) => {
       try {
         socket.leave(rideId);
-        logger.info(`${socket.user.username} left chat room: ${rideId}`);
+        logger.info(`${getDisplayName(socket.user)} left chat room: ${rideId}`);
 
         const sysMsg = await chatService.saveSystemMessage(
           rideId,
-          `${socket.user.username} left the chat`,
+          `${getDisplayName(socket.user)} left the chat`,
         );
 
         socket.to(rideId).emit("system_message", {
@@ -138,14 +139,14 @@ const initSocket = (httpServer) => {
     socket.on("typing", ({ rideId, isTyping }) => {
       socket.to(rideId).emit("user_typing", {
         userId: socket.user.sub,
-        username: socket.user.username,
+        username: getDisplayName(socket.user),
         isTyping,
       });
     });
 
     // ─── Disconnect
     socket.on("disconnect", () => {
-      logger.info(`User disconnected from chat: ${socket.user.username}`);
+      logger.info(`User disconnected from chat: ${getDisplayName(socket.user)}`);
     });
   });
 

@@ -13,6 +13,7 @@ const start = async () => {
 
     const httpServer = http.createServer(app);
     const io = initSocket(httpServer);
+    app.set("io", io);
 
     httpServer.listen(PORT, () => {
       logger.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
