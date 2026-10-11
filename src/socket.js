@@ -7,6 +7,7 @@ import { getDisplayName } from "./utils/displayName.js";
 
 const initSocket = (httpServer) => {
   const io = new Server(httpServer, {
+    path: "/api/chat/socket.io",
     cors: {
       origin: process.env.ALLOWED_ORIGINS?.split(",") || "*",
       credentials: true,
