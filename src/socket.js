@@ -1,155 +1,27 @@
 import { Server } from "socket.io";
-import jwt from "jsonwebtoken";
+import { createAdapter } from "@socket.io/redis-adapter";
 import redis from "./config/redis.js";
-import * as chatService from "./services/chat.service.js";
 import logger from "./utils/logger.js";
-import { getDisplayName } from "./utils/displayName.js";
 
 const initSocket = (httpServer) => {
-  const io = new Server(httpServer, {
-    path: "/api/chat/socket.io",
-    cors: {
-      origin: process.env.ALLOWED_ORIGINS?.split(",") || "*",
-      credentials: true,
-    },
-  });
+  const io = new Server(httpServer);
 
-  // ─── Auth Middleware
-  io.use(async (socket, next) => {
-    try {
-      const token =
-        socket.handshake.auth?.token || socket.handshake.query?.auth;
-      if (!token) return next(new Error("No token provided"));
+  try {
+    const pubClient = redis.duplicate();
+    const subClient = redis.duplicate();
 
-      const decoded = jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, {
-        issuer: "cab-auth-service",
-        audience: "cab-app",
-      });
-
-      socket.user = decoded;
-      next();
-    } catch (err) {
-      next(new Error("Authentication failed"));
-    }
-  });
-
-  // ─── Connection
-  io.on("connection", (socket) => {
-    logger.info(`User connected to chat: ${getDisplayName(socket.user)}`);
-
-    // ─── Join Chat Room
-    socket.on("join_chat", async (rideId) => {
-      try {
-        // Redis me check karo — ye user is ride me hai?
-        const isMember = await redis.sismember(
-          `ride_members:${rideId}`,
-          socket.user.sub,
-        );
-
-        if (!isMember) {
-          socket.emit("error", {
-            message: "You are not a member of this ride",
-          });
-          return;
-        }
-
-        socket.join(rideId);
-        logger.info(`${getDisplayName(socket.user)} joined chat room: ${rideId}`);
-
-        // System message — user joined
-        const sysMsg = await chatService.saveSystemMessage(
-          rideId,
-          `${getDisplayName(socket.user)} joined the chat`,
-        );
-
-        // Room me sabko batao
-        io.to(rideId).emit("system_message", {
-          message: sysMsg.message,
-          timestamp: sysMsg.createdAt,
-        });
-      } catch (err) {
-        logger.error("Join chat error:", err.message);
-        socket.emit("error", { message: err.message });
-      }
+    pubClient.on("error", (err) => {
+      logger.error("Chat Redis PubClient error:", { message: err.message });
+    });
+    subClient.on("error", (err) => {
+      logger.error("Chat Redis SubClient error:", { message: err.message });
     });
 
-    // ─── Send Message
-    socket.on("send_message", async ({ rideId, message }) => {
-      try {
-        if (!message?.trim()) return;
-        if (message.length > 500) {
-          socket.emit("error", { message: "Message too long (max 500 chars)" });
-          return;
-        }
-
-        // Redis me check karo
-        const isMember = await redis.sismember(
-          `ride_members:${rideId}`,
-          socket.user.sub,
-        );
-        if (!isMember) {
-          socket.emit("error", {
-            message: "You are not a member of this ride",
-          });
-          return;
-        }
-
-        // DB me save karo
-        const savedMsg = await chatService.saveMessage(
-          rideId,
-          socket.user.sub,
-          getDisplayName(socket.user),
-          message.trim(),
-        );
-
-        // Room me sabko bhejo
-        io.to(rideId).emit("new_message", {
-          messageId: savedMsg._id,
-          senderId: socket.user.sub,
-          senderUsername: getDisplayName(socket.user),
-          message: savedMsg.message,
-          timestamp: savedMsg.createdAt,
-        });
-      } catch (err) {
-        logger.error("Send message error:", err.message);
-        socket.emit("error", { message: err.message });
-      }
-    });
-
-    // ─── Leave Chat Room
-    socket.on("leave_chat", async (rideId) => {
-      try {
-        socket.leave(rideId);
-        logger.info(`${getDisplayName(socket.user)} left chat room: ${rideId}`);
-
-        const sysMsg = await chatService.saveSystemMessage(
-          rideId,
-          `${getDisplayName(socket.user)} left the chat`,
-        );
-
-        socket.to(rideId).emit("system_message", {
-          message: sysMsg.message,
-          timestamp: sysMsg.createdAt,
-        });
-      } catch (err) {
-        logger.error("Leave chat error:", err.message);
-      }
-    });
-
-    // ─── Typing Indicator
-    socket.on("typing", ({ rideId, isTyping }) => {
-      socket.to(rideId).emit("user_typing", {
-        userId: socket.user.sub,
-        username: getDisplayName(socket.user),
-        isTyping,
-      });
-    });
-
-    // ─── Disconnect
-    socket.on("disconnect", () => {
-      logger.info(`User disconnected from chat: ${getDisplayName(socket.user)}`);
-    });
-  });
+    io.adapter(createAdapter(pubClient, subClient));
+    logger.info("Chat Socket.io Redis adapter connected");
+  } catch (err) {
+    logger.error("Chat Redis adapter error:", { message: err.message });
+  }
 
   return io;
 };

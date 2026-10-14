@@ -1,0 +1,86 @@
+import pubsub from "../config/pubsub.js";
+import logger from "../utils/logger.js";
+import * as chatService from "../services/chat.service.js";
+
+const SUBSCRIPTION_NAME = process.env.CHAT_EVENTS_SUB || "chat-events-sub";
+
+export const startChatSubscriber = (io) => {
+  try {
+    const subscription = pubsub.subscription(SUBSCRIPTION_NAME);
+
+    subscription.on("message", async (message) => {
+      try {
+        const parsedData = JSON.parse(message.data.toString());
+        const { eventType, payload } = parsedData;
+
+        // ── 1. RIDE_CHAT_JOINED ──
+        if (eventType === "RIDE_CHAT_JOINED") {
+          const { rideId, userId, displayName } = payload;
+          const sysMsg = await chatService.saveSystemMessage(
+            rideId,
+            `${displayName} joined the chat`
+          );
+
+          if (io) {
+            io.to(rideId).emit("system_message", {
+              message: sysMsg.message,
+              timestamp: sysMsg.createdAt,
+            });
+          }
+        }
+
+        // ── 2. SEND_RIDE_CHAT_MESSAGE ──
+        if (eventType === "SEND_RIDE_CHAT_MESSAGE") {
+          const { rideId, userId, displayName, text } = payload;
+
+          const savedMsg = await chatService.saveMessage(
+            rideId,
+            userId,
+            displayName,
+            text
+          );
+
+          if (io) {
+            io.to(rideId).emit("new_message", {
+              messageId: savedMsg._id,
+              senderId: userId,
+              senderUsername: displayName,
+              message: savedMsg.message,
+              timestamp: savedMsg.createdAt,
+            });
+          }
+        }
+
+        // ── 3. RIDE_CHAT_LEFT ──
+        if (eventType === "RIDE_CHAT_LEFT") {
+          const { rideId, userId, displayName } = payload;
+          const sysMsg = await chatService.saveSystemMessage(
+            rideId,
+            `${displayName} left the chat`
+          );
+
+          if (io) {
+            io.to(rideId).emit("system_message", {
+              message: sysMsg.message,
+              timestamp: sysMsg.createdAt,
+            });
+          }
+        }
+
+        message.ack();
+        logger.info(`Processed chat event: ${eventType} (MsgID: ${message.id})`);
+      } catch (err) {
+        logger.error(`Error processing Chat Pub/Sub message: ${err.message}`);
+        message.nack();
+      }
+    });
+
+    subscription.on("error", (error) => {
+      logger.error("Chat Pub/Sub subscription error:", { message: error.message });
+    });
+
+    logger.info(`Chat Subscriber listening on ${SUBSCRIPTION_NAME}`);
+  } catch (err) {
+    logger.error("Failed to start Chat Subscriber:", { message: err.message });
+  }
+};

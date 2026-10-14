@@ -4,6 +4,7 @@ import app from "./app.js";
 import connectDB from "./src/config/db.js";
 import initSocket from "./src/socket.js";
 import logger from "./src/utils/logger.js";
+import { startChatSubscriber } from "./src/workers/chatSubscriber.js";
 
 const PORT = process.env.PORT || 3003;
 
@@ -14,6 +15,8 @@ const start = async () => {
     const httpServer = http.createServer(app);
     const io = initSocket(httpServer);
     app.set("io", io);
+
+    startChatSubscriber(io);
 
     httpServer.listen(PORT, () => {
       logger.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
