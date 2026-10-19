@@ -2,6 +2,8 @@ import pubsub from "../config/pubsub.js";
 import logger from "../utils/logger.js";
 import * as chatService from "../services/chat.service.js";
 
+import ChatMessage from "../models/Message.js"; 
+
 const SUBSCRIPTION_NAME = process.env.CHAT_EVENTS_SUB || "chat-events-sub";
 
 export const startChatSubscriber = (io) => {
@@ -65,6 +67,24 @@ export const startChatSubscriber = (io) => {
               timestamp: sysMsg.createdAt,
             });
           }
+        }
+
+        // ── 4. USER_DELETED (Wipe out chat data) ──
+        if (eventType === "USER_DELETED") {
+          const { userId } = payload;
+
+          // User ke bheje gaye saare ride chat messages ko anonymize
+          await ChatMessage.updateMany(
+            { senderId: userId },
+            { 
+              $set: { 
+                senderUsername: "Deleted User", 
+                message: "This message was removed because the user deleted their account." 
+              } 
+            }
+          );
+
+          logger.info(`Wiped out all ride chat data for deleted user: ${userId}`);
         }
 
         message.ack();
