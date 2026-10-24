@@ -1,6 +1,7 @@
 import pubsub from "../config/pubsub.js";
 import logger from "../utils/logger.js";
 import * as chatService from "../services/chat.service.js";
+import { handleSubscriberError } from "../utils/subscriberError.js";
 
 import ChatMessage from "../models/Message.js"; 
 
@@ -90,8 +91,12 @@ export const startChatSubscriber = (io) => {
         message.ack();
         logger.info(`Processed chat event: ${eventType} (MsgID: ${message.id})`);
       } catch (err) {
-        logger.error(`Error processing Chat Pub/Sub message: ${err.message}`);
-        message.nack();
+        handleSubscriberError(
+          message,
+          err,
+          logger,
+          "chat-service:chatSubscriber",
+        );
       }
     });
 
