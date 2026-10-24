@@ -2,10 +2,18 @@ import pubsub from "../config/pubsub.js";
 import logger from "../utils/logger.js";
 import * as chatService from "../services/chat.service.js";
 import { handleSubscriberError } from "../utils/subscriberError.js";
+import {
+  alreadyProcessed,
+  markProcessed,
+  releaseProcessed,
+} from "../utils/messageDedupe.js";
 
 import ChatMessage from "../models/Message.js"; 
 
 const SUBSCRIPTION_NAME = process.env.CHAT_EVENTS_SUB || "chat-events-sub";
+
+// Dedupe claim aur release dono me same hona chahiye
+const SUBSCRIBER_CONTEXT = "chat-service:chatSubscriber";
 
 export const startChatSubscriber = (io) => {
   try {
@@ -15,6 +23,15 @@ export const startChatSubscriber = (io) => {
       try {
         const parsedData = JSON.parse(message.data.toString());
         const { eventType, payload } = parsedData;
+
+        // ── Duplicate delivery (Pub/Sub at-least-once) — pehle hi process ho chuka
+        if (await alreadyProcessed(message.id, SUBSCRIBER_CONTEXT)) {
+          logger.info(
+            `Skipped duplicate chat event: ${eventType} (MsgID: ${message.id})`,
+          );
+          message.ack();
+          return;
+        }
 
         // ── 1. RIDE_CHAT_JOINED ──
         if (eventType === "RIDE_CHAT_JOINED") {
@@ -89,14 +106,12 @@ export const startChatSubscriber = (io) => {
         }
 
         message.ack();
+        await markProcessed(message.id, SUBSCRIBER_CONTEXT);
         logger.info(`Processed chat event: ${eventType} (MsgID: ${message.id})`);
       } catch (err) {
-        handleSubscriberError(
-          message,
-          err,
-          logger,
-          "chat-service:chatSubscriber",
-        );
+        // Fail hua — claim hata do, warna retry duplicate samajh ke skip ho jayega
+        await releaseProcessed(message.id, SUBSCRIBER_CONTEXT);
+        handleSubscriberError(message, err, logger, SUBSCRIBER_CONTEXT);
       }
     });
 
