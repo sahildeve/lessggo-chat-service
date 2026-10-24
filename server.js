@@ -17,6 +17,11 @@ const start = async () => {
     app.set("io", io);
 
     startChatSubscriber(io);
+    // auth-events topic ka USER_DELETED — alag subscription, same handler
+    startChatSubscriber(
+      io,
+      process.env.USER_DELETED_SUB || "chat-user-deleted-sub",
+    );
 
     httpServer.listen(PORT, () => {
       logger.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);

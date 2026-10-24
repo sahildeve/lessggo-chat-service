@@ -15,9 +15,11 @@ const SUBSCRIPTION_NAME = process.env.CHAT_EVENTS_SUB || "chat-events-sub";
 // Dedupe claim aur release dono me same hona chahiye
 const SUBSCRIBER_CONTEXT = "chat-service:chatSubscriber";
 
-export const startChatSubscriber = (io) => {
+// subscriptionName param — same handler do subscriptions pe chalta hai
+// (chat-events + auth-events ka USER_DELETED); eventType pe branch karta hai
+export const startChatSubscriber = (io, subscriptionName = SUBSCRIPTION_NAME) => {
   try {
-    const subscription = pubsub.subscription(SUBSCRIPTION_NAME);
+    const subscription = pubsub.subscription(subscriptionName);
 
     subscription.on("message", async (message) => {
       try {
@@ -116,10 +118,13 @@ export const startChatSubscriber = (io) => {
     });
 
     subscription.on("error", (error) => {
-      logger.error("Chat Pub/Sub subscription error:", { message: error.message });
+      logger.error("Chat Pub/Sub subscription error:", {
+        subscription: subscriptionName,
+        message: error.message,
+      });
     });
 
-    logger.info(`Chat Subscriber listening on ${SUBSCRIPTION_NAME}`);
+    logger.info(`Chat Subscriber listening on ${subscriptionName}`);
   } catch (err) {
     logger.error("Failed to start Chat Subscriber:", { message: err.message });
   }
