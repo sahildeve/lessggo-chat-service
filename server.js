@@ -1,5 +1,6 @@
 import "dotenv/config";
 import http from "http";
+import util from "util";
 import app from "./app.js";
 import connectDB from "./src/config/db.js";
 import initSocket from "./src/socket.js";
@@ -40,12 +41,37 @@ const start = async () => {
 
 start();
 
+// Rejected value Error na ho (string, plain object, undefined) toh bhi kuch dikhe.
+// String() plain object ke liye sirf "[object Object]" deta hai — isliye inspect bhi.
+// String() throw bhi kar sakta hai (e.g. Object.create(null)) — handler khud crash na ho
+const errorDetails = (err) => {
+  let value;
+  try {
+    value = String(err);
+  } catch {
+    value = "[unstringifiable value]";
+  }
+  let inspected;
+  try {
+    inspected = util.inspect(err, { depth: 4, breakLength: Infinity });
+  } catch {
+    inspected = "[uninspectable value]";
+  }
+  return {
+    name: err?.name,
+    message: err?.message,
+    stack: err?.stack,
+    value,
+    inspected,
+  };
+};
+
 process.on("unhandledRejection", (err) => {
-  logger.error("Unhandled Rejection:", err.message);
+  logger.error("Unhandled Rejection:", errorDetails(err));
   process.exit(1);
 });
 
 process.on("uncaughtException", (err) => {
-  logger.error("Uncaught Exception:", err.message);
+  logger.error("Uncaught Exception:", errorDetails(err));
   process.exit(1);
 });
