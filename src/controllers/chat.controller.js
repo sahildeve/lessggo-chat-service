@@ -2,12 +2,18 @@ import * as chatService from "../services/chat.service.js";
 import { success, error } from "../utils/response.js";
 import logger from "../utils/logger.js";
 
+// Malformed ids used to reach MongoDB and come back as 500s (CHAT-11).
+const isObjectId = (v) => /^[a-f\d]{24}$/i.test(String(v));
+const badId = (res) => error(res, "Invalid id", 400);
+
 // ─── Get Chat History
 export const getChatHistory = async (req, res) => {
   try {
     const { rideId } = req.params;
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 50;
+    if (!isObjectId(rideId)) return badId(res);
+    // Bounded paging (CHAT-11): negative pages and huge limits used to 500.
+    const page = Math.max(parseInt(req.query.page) || 1, 1);
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || 50, 1), 50);
 
     const data = await chatService.getChatHistory(
       rideId,
@@ -29,6 +35,7 @@ export const getChatHistory = async (req, res) => {
 export const deleteMessage = async (req, res) => {
   try {
     const { messageId } = req.params;
+    if (!isObjectId(messageId)) return badId(res);
     await chatService.deleteMessage(messageId, req.user.sub);
     return success(res, {}, "Message deleted successfully");
   } catch (err) {
@@ -43,6 +50,7 @@ export const deleteMessage = async (req, res) => {
 export const deleteRideChat = async (req, res) => {
   try {
     const { rideId } = req.params;
+    if (!isObjectId(rideId)) return badId(res);
     await chatService.deleteRideChat(rideId, req.user.sub);
     return success(res, {}, "Chat deleted successfully");
   } catch (err) {

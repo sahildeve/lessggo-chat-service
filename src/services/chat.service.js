@@ -20,7 +20,15 @@ export const saveMessage = async (
 
 export const getChatHistory = async (rideId, userId, page = 1, limit = 50) => {
   // ── Membership check — Redis me ride members store hote hain
-  const isMember = await redis.sismember(`ride_members:${rideId}`, userId);
+  let isMember;
+  try {
+    isMember = await redis.sismember(`ride_members:${rideId}`, userId);
+  } catch {
+    // Redis down is a temporary problem, not a server bug (CHAT-10).
+    const err = new Error("Chat is temporarily unavailable, please try again");
+    err.status = 503;
+    throw err;
+  }
 
   if (!isMember) {
     const err = new Error("You are not a member of this ride");
