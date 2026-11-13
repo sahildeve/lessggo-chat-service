@@ -1,20 +1,28 @@
 import "dotenv/config";
 import http from "http";
 import util from "util";
+import mongoose from "mongoose";
 import app from "./app.js";
 import connectDB from "./src/config/db.js";
+import redis from "./src/config/redis.js";
 import initSocket from "./src/socket.js";
+import {
+  startChatSubscriber,
+  stopChatSubscribers,
+} from "./src/workers/chatSubscriber.js";
 import logger from "./src/utils/logger.js";
-import { startChatSubscriber } from "./src/workers/chatSubscriber.js";
 
 const PORT = process.env.PORT || 3003;
+let httpServer;
 
 const start = async () => {
   try {
     await connectDB();
 
-    const httpServer = http.createServer(app);
-    const io = initSocket(httpServer);
+
+    httpServer = http.createServer(app);
+
+    const io = await initSocket(httpServer);
     app.set("io", io);
 
     startChatSubscriber(io);
@@ -25,13 +33,12 @@ const start = async () => {
     );
 
     httpServer.listen(PORT, () => {
-      logger.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-      logger.info(`  Chat Service running on port ${PORT}`);
-      logger.info(`  Mode : ${process.env.NODE_ENV}`);
-      logger.info(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+      logger.info(`Chat Service running on port ${PORT}`, {
+        mode: process.env.NODE_ENV,
+      });
     });
   } catch (err) {
-    logger.error("Server startup error:", {
+    logger.error("Server startup error", {
       message: err.message,
       stack: err.stack,
     });
@@ -41,16 +48,8 @@ const start = async () => {
 
 start();
 
-// Rejected value Error na ho (string, plain object, undefined) toh bhi kuch dikhe.
-// String() plain object ke liye sirf "[object Object]" deta hai — isliye inspect bhi.
-// String() throw bhi kar sakta hai (e.g. Object.create(null)) — handler khud crash na ho
+// Readable details even when the rejected value is not an Error.
 const errorDetails = (err) => {
-  let value;
-  try {
-    value = String(err);
-  } catch {
-    value = "[unstringifiable value]";
-  }
   let inspected;
   try {
     inspected = util.inspect(err, { depth: 4, breakLength: Infinity });
@@ -61,17 +60,43 @@ const errorDetails = (err) => {
     name: err?.name,
     message: err?.message,
     stack: err?.stack,
-    value,
     inspected,
   };
 };
 
+// ── Graceful shutdown (CHAT-06) ──
+// Cloud Run sends SIGTERM on deploy / scale-down and kills the instance ~10s
+// later. Stop Pub/Sub first (unfinished messages are retried, see METRO-07),
+// let in-flight HTTP requests finish, then close connections.
+let shuttingDown = false;
+const shutdown = async (signal) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  logger.info(`${signal} received, shutting down gracefully`);
+
+  const forceExit = setTimeout(() => process.exit(0), 9000);
+  forceExit.unref();
+
+  try {
+    await stopChatSubscribers();
+    if (httpServer) await new Promise((resolve) => httpServer.close(resolve));
+    await Promise.allSettled([mongoose.connection.close(), redis.quit()]);
+  } finally {
+    process.exit(0);
+  }
+};
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
+
+// Log only: one stray rejected promise should not kill every in-flight request.
 process.on("unhandledRejection", (err) => {
-  logger.error("Unhandled Rejection:", errorDetails(err));
-  process.exit(1);
+  logger.error("Unhandled Rejection", errorDetails(err));
 });
 
+// After an uncaught exception the process state is unknown: log and exit so
+// Cloud Run starts a clean instance (it used to keep running broken).
 process.on("uncaughtException", (err) => {
-  logger.error("Uncaught Exception:", errorDetails(err));
+  logger.error("Uncaught Exception", errorDetails(err));
   process.exit(1);
 });

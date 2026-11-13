@@ -3,20 +3,21 @@ import { createAdapter } from "@socket.io/redis-adapter";
 import redis from "./config/redis.js";
 import logger from "./utils/logger.js";
 
+// eslint-disable-next-line no-unused-vars
 const initSocket = (httpServer) => {
-  const io = new Server(httpServer);
+  // Not attached to the HTTP server (CHAT-02): no client can connect here.
+  // This instance only emits and joins sockets through the Redis adapter;
+  // browsers connect to the gateway only.
+  const io = new Server();
 
   try {
-    // Adapter clients sirf inter-instance broadcasting ke liye hain — koi user request
-    // inpe wait nahi karti, isliye main client wala "fail fast" config yahan galat hai:
-    //  - commandTimeout: undefined — SUBSCRIBE/PSUBSCRIBE long-lived hain; inherited
-    //    5000ms timeout slow connect pe unhe reject karta hai → Unhandled Rejection, aur
-    //    instance dusre instances ke broadcasts receive karna band kar deta hai.
-    //    (0 mat daalna — ioredis 0ms ka timeout laga dega)
-    //  - maxRetriesPerRequest: null — adapter publish() bina .catch ke karta hai; Redis
-    //    outage me retry limit hit hone par rejection handled error nahi, Unhandled
-    //    Rejection banta hai. null = reconnect tak queue me rakho
-    // Main client (config/redis.js) ka commandTimeout/maxRetriesPerRequest sahi hai — mat badlo
+    // Adapter clients are only for broadcasting between instances, so the main
+    // client's "fail fast" settings are wrong here:
+    //  - commandTimeout: undefined — SUBSCRIBE is long-lived; a 5s timeout would
+    //    reject it on a slow connect and stop this instance receiving broadcasts.
+    //    (Do not use 0: ioredis treats it as a 0ms timeout.)
+    //  - maxRetriesPerRequest: null — the adapter publishes without .catch; keep
+    //    commands queued until Redis is back instead of rejecting them.
     const pubClient = redis.duplicate({
       commandTimeout: undefined,
       maxRetriesPerRequest: null,
@@ -26,17 +27,18 @@ const initSocket = (httpServer) => {
       maxRetriesPerRequest: null,
     });
 
-    pubClient.on("error", (err) => {
-      logger.error("Chat Redis PubClient error:", { message: err.message });
-    });
-    subClient.on("error", (err) => {
-      logger.error("Chat Redis SubClient error:", { message: err.message });
-    });
+    // duplicate() does not copy listeners: log errors through our logger (CHAT-02).
+    pubClient.on("error", (err) =>
+      logger.error("Socket adapter pub Redis error", { message: err.message }),
+    );
+    subClient.on("error", (err) =>
+      logger.error("Socket adapter sub Redis error", { message: err.message }),
+    );
 
     io.adapter(createAdapter(pubClient, subClient));
     logger.info("Chat Socket.io Redis adapter connected");
   } catch (err) {
-    logger.error("Chat Redis adapter error:", { message: err.message });
+    logger.error("Chat Redis adapter error", { message: err.message });
   }
 
   return io;
