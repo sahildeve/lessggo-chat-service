@@ -117,7 +117,7 @@ export const startChatSubscriber = (
           );
 
           if (io) {
-            io.to(rideId).emit("system_message", {
+            io.to([`ride:${rideId}`, String(rideId)]).emit("system_message", {
               message: sysMsg.message,
               timestamp: sysMsg.createdAt,
             });
@@ -136,7 +136,7 @@ export const startChatSubscriber = (
           );
 
           if (io) {
-            io.to(rideId).emit("new_message", {
+            io.to([`ride:${rideId}`, String(rideId)]).emit("new_message", {
               messageId: savedMsg._id,
               senderId: userId,
               senderUsername: displayName,
@@ -155,7 +155,7 @@ export const startChatSubscriber = (
           );
 
           if (io) {
-            io.to(rideId).emit("system_message", {
+            io.to([`ride:${rideId}`, String(rideId)]).emit("system_message", {
               message: sysMsg.message,
               timestamp: sysMsg.createdAt,
             });

@@ -79,7 +79,7 @@ export const postSystemMessage = async (req, res) => {
 
     const io = req.app.get("io");
     if (io) {
-      io.to(rideId).emit("system_message", {
+      io.to([`ride:${rideId}`, String(rideId)]).emit("system_message", {
         message: savedMsg.message,
         timestamp: savedMsg.createdAt,
       });
@@ -105,7 +105,7 @@ export const closeRideChat = async (req, res) => {
 
     const io = req.app.get("io");
     if (io) {
-      io.to(rideId).emit("chat_closed", {
+      io.to([`ride:${rideId}`, String(rideId)]).emit("chat_closed", {
         rideId,
         message: savedMsg.message,
         timestamp: savedMsg.createdAt,
